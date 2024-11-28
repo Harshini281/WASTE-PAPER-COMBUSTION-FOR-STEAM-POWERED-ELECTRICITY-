@@ -1,0 +1,165 @@
+#define BLYNK_TEMPLATE_ID "TMPL3UwdaexLa"
+#define BLYNK_TEMPLATE_NAME "Motion sensor"
+#define BLYNK_AUTH_TOKEN "usVQNy6V9sgBz3oXV3rPgEWBXXFqnT6Q"
+
+
+
+
+#define BLYNK_PRINT Serial
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <DHT.h>
+#include <TinyGPS++.h>
+
+// WiFi credentials
+char ssid[] = "Airtel_7904030785";
+char pass[] = "air46278";
+
+// DHT sensor settings
+#define DHTPIN 15                 // DHT sensor pin
+#define DHTTYPE DHT22             // DHT sensor type (DHT11 or DHT22)
+DHT dht(DHTPIN, DHTTYPE);
+
+// Buzzer settings
+#define BUZZER_PIN 2              // Buzzer control pin
+#define PIR_PIN 13                // PIR sensor pin
+
+// GPS settings
+#define RXD2 3                   // GPS RX pin
+#define TXD2 1                   // GPS TX pin
+TinyGPSPlus gps;
+HardwareSerial neogps(2);         // Use serial port 2 for GPS communication
+
+BlynkTimer timer;
+
+int pinStateCurrent = LOW;
+int pinStatePrevious = LOW;
+
+// Fallback coordinates
+float fallbackLatitude = 11.055360;
+float fallbackLongitude = 78.047677;
+
+// Blynk connected function to sync virtual pins
+BLYNK_CONNECTED() {
+  Serial.println("Connected to Blynk server");
+  Blynk.syncVirtual(V0);  
+  Blynk.syncVirtual(V1);  
+  Blynk.syncVirtual(V2);  
+  Blynk.syncVirtual(V3);  
+  Blynk.syncVirtual(V4);  
+}
+
+// Function to send DHT sensor data (temperature and humidity)
+void sendSensorData() {
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
+
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("Failed to read from DHT sensor!");
+    return;
+  }
+
+  // Send temperature and humidity values to Blynk
+  Blynk.virtualWrite(V1, temperature);
+  Blynk.virtualWrite(V2, humidity);
+  
+  Serial.print("Temperature: ");
+  Serial.print(temperature);
+  Serial.print(" °C    Humidity: ");
+  Serial.print(humidity);
+  Serial.println(" %");
+
+  Serial.println("Data sent to Blynk on V1 (temperature) and V2 (humidity)");
+}
+
+// Function to check motion status and update Blynk accordingly
+void checkMotion() {
+  pinStatePrevious = pinStateCurrent;
+  pinStateCurrent = digitalRead(PIR_PIN);
+
+  if (pinStatePrevious == LOW && pinStateCurrent == HIGH) {
+    Serial.println("Motion detected!");
+    digitalWrite(BUZZER_PIN, HIGH); // Activate buzzer
+    Blynk.virtualWrite(V0, "Motion Detected"); // Send "Motion Detected" to Blynk V0
+    Serial.println("Motion detected: updated Blynk on V0");
+  } else if (pinStatePrevious == HIGH && pinStateCurrent == LOW) {
+    Serial.println("Motion stopped!");
+    digitalWrite(BUZZER_PIN, LOW);  // Deactivate buzzer
+    Blynk.virtualWrite(V0, "Motion Stopped"); // Send "Motion Stopped" to Blynk V0
+    Serial.println("Motion stopped: updated Blynk on V0");
+  }
+}
+
+// Function to send GPS data (latitude and longitude) to Blynk
+void sendGps() {
+  while (neogps.available()) {
+    if (gps.encode(neogps.read())) {
+      break;
+    }
+  }
+
+  // Check if the GPS location is valid
+  if (gps.location.isValid()) {
+    // Get latitude and longitude
+    float latitude = gps.location.lat();
+    float longitude = gps.location.lng();
+
+    // Send latitude and longitude to Blynk
+    Blynk.virtualWrite(V3, latitude);
+    Blynk.virtualWrite(V4, longitude);
+
+    // Debug information
+    Serial.print("Latitude: ");
+    Serial.println(latitude, 6);
+    Serial.print("Longitude: ");
+    Serial.println(longitude, 6);
+  } else {
+    // If GPS is not valid, send fallback coordinates
+    Blynk.virtualWrite(V3, fallbackLatitude);
+    Blynk.virtualWrite(V4, fallbackLongitude);
+
+    // Print a message indicating that fallback coordinates are being sent
+    Serial.println("GPS location is not valid! Sending fallback coordinates.");
+    Serial.print("Fallback Latitude: ");
+    Serial.println(fallbackLatitude, 6);
+    Serial.print("Fallback Longitude: ");
+    Serial.println(fallbackLongitude, 6);
+  }
+  
+  Serial.println("GPS data processed.");
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Setting up...");
+
+  // Initialize WiFi and Blynk connection
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected. Please check credentials.");
+  } else {
+    Serial.println("WiFi connected.");
+  }
+
+  // Initialize sensors and pins
+  dht.begin();
+  pinMode(PIR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW); // Ensure buzzer is off at start
+
+  // Initialize GPS module
+  neogps.begin(9600, SERIAL_8N1, RXD2, TXD2);
+  Serial.println("GPS module initialized");
+
+  // Set up timers for periodic updates
+  timer.setInterval(2000L, sendSensorData);  // Update DHT sensor data every 2 seconds
+  timer.setInterval(500L, checkMotion);      // Check motion status every 500 ms
+  timer.setInterval(1000L, sendGps);         // Update GPS data every 1 second
+}
+
+void loop() {
+  Blynk.run();
+  timer.run();
+}
